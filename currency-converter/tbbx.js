@@ -1,9 +1,7 @@
         document.addEventListener('DOMContentLoaded', function () {
             // --- CONFIGURATION ---
-            // IMPORTANT: Replace with your actual API key from https://www.exchangerate-api.com/
-            // Using a temporary key for demonstration.
-            const apiKey = 'a64836b31b7368044b719fa9'; // Replace this!
-            const apiUrl = `https://v6.exchangerate-api.com/v6/${apiKey}/latest/USD`;
+            const apiUrl = 'https://api.frankfurter.dev/v2/rates?base=USD';
+            const currenciesUrl = 'https://api.frankfurter.dev/v2/currencies';
 
             // --- DOM ELEMENTS ---
             const fromCurrencySelect = document.getElementById('cc-from-currency');
@@ -25,8 +23,8 @@
                 showLoader(true);
                 try {
                     const data = await fetchCurrencyData();
-                    if (data.result === 'error' || !data.conversion_rates) {
-                         throw new Error(data['error-type'] || 'Invalid data from API');
+                    if (!data.conversion_rates) {
+                         throw new Error('Invalid data from API');
                     }
                     conversionRates = data.conversion_rates;
                     currencyData = await fetchCurrencyMetadata();
@@ -54,23 +52,42 @@
                 if (cachedData && cacheTime && (new Date().getTime() - cacheTime < 6 * 60 * 60 * 1000)) {
                     return JSON.parse(cachedData);
                 } else {
-                    const response = await fetch(apiUrl);
+                    const response = await fetch(apiUrl, { mode: 'cors', cache: 'no-store' });
                     if (!response.ok) {
                         throw new Error(`API request failed with status ${response.status}`);
                     }
-                    const data = await response.json();
-                    if (data.result === 'error') {
-                        throw new Error(`API Error: ${data['error-type']}`);
-                    }
-                    localStorage.setItem('currencyData', JSON.stringify(data));
+                    const rawData = await response.json();
+                    const data = normalizeFrankfurterRates(rawData);
                     localStorage.setItem('currencyCacheTime', new Date().getTime());
+                    localStorage.setItem('currencyData', JSON.stringify(data));
                     return data;
                 }
             }
+
+            function normalizeFrankfurterRates(data) {
+                const rates = { USD: 1 };
+                let latestDate = '';
+
+                (data.value || []).forEach(item => {
+                    if (item.quote && Number.isFinite(Number(item.rate))) {
+                        rates[item.quote] = Number(item.rate);
+                        if (!latestDate || item.date > latestDate) {
+                            latestDate = item.date;
+                        }
+                    }
+                });
+
+                if (!Array.isArray(data.value) || !data.value.length) {
+                    throw new Error('Invalid data from Frankfurter API');
+                }
+
+                return {
+                    time_last_update_utc: latestDate ? `${latestDate}T00:00:00Z` : new Date().toISOString(),
+                    conversion_rates: rates
+                };
+            }
             
             async function fetchCurrencyMetadata() {
-                 // A lightweight way to get currency names without another API call
-                 // For a more robust solution, a dedicated currency names API could be used.
                 const metadata = {
                     "USD": "US Dollar", "EUR": "Euro", "JPY": "Japanese Yen", "GBP": "British Pound", "AUD": "Australian Dollar",
                     "CAD": "Canadian Dollar", "CHF": "Swiss Franc", "CNY": "Chinese Yuan", "SEK": "Swedish Krona", "NZD": "New Zealand Dollar",
@@ -82,7 +99,22 @@
                     "KWD": "Kuwaiti Dinar", "NGN": "Nigerian Naira", "PLN": "Polish Złoty", "QAR": "Qatari Riyal", "RON": "Romanian Leu",
                     "SAR": "Saudi Riyal", "UAH": "Ukrainian Hryvnia"
                 };
-                
+                try {
+                    const response = await fetch(currenciesUrl, { mode: 'cors', cache: 'no-store' });
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (Array.isArray(data.value)) {
+                            data.value.forEach(currency => {
+                                if (currency.iso_code && currency.name) {
+                                    metadata[currency.iso_code] = currency.name;
+                                }
+                            });
+                        }
+                    }
+                } catch (error) {
+                    console.warn('Currency metadata unavailable, using embedded names:', error);
+                }
+
                 // Add all available currencies from the API response to the metadata if they don't exist
                 Object.keys(conversionRates).forEach(code => {
                     if (!metadata[code]) {
@@ -168,8 +200,7 @@
                 errorMessage.style.color = '#856404';
                 errorMessage.innerHTML = `
                     <p style="margin: 0 0 0.5rem 0; font-weight: bold;">Live Rates Unavailable</p>
-                    <p style="margin: 0;">Could not connect to the currency API. This often happens if the API key is missing or invalid. The converter has been loaded with sample data.</p>
-                    <p style="margin-top: 0.5rem;">Please replace <strong>'YOUR_API_KEY_HERE'</strong> in the script with a real key from <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener" style="color: #856404; text-decoration: underline;">exchangerate-api.com</a> to get live data.</p>
+                    <p style="margin: 0;">Could not connect to the currency API. The converter has been loaded with sample data.</p>
                 `;
                 header.parentNode.insertBefore(errorMessage, header.nextSibling);
 

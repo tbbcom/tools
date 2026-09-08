@@ -34,16 +34,16 @@ function precise(n,code){var d=minor(code);return Number(n).toFixed(Math.min(6,M
 /* Providers */
 var providers = {
   host:{
-    name:"exchangerate.host",
-    symbols:"https://api.exchangerate.host/symbols",
-    latest:function(base){return "https://api.exchangerate.host/latest?base="+encodeURIComponent(base)},
-    rate:function(from,to){return "https://api.exchangerate.host/convert?from="+encodeURIComponent(from)+"&to="+encodeURIComponent(to)}
+    name:"Frankfurter",
+    symbols:"https://api.frankfurter.dev/v2/currencies",
+    latest:function(base){return "https://api.frankfurter.dev/v2/rates?base="+encodeURIComponent(base)},
+    rate:function(from,to){return "https://api.frankfurter.dev/v2/rate/"+encodeURIComponent(from)+"/"+encodeURIComponent(to)}
   },
   frank:{
-    name:"frankfurter",
-    symbols:"https://api.frankfurter.dev/currencies",
-    latest:function(base){return "https://api.frankfurter.dev/latest?from="+encodeURIComponent(base)},
-    rate:function(from,to){return "https://api.frankfurter.dev/latest?from="+encodeURIComponent(from)+"&to="+encodeURIComponent(to)}
+    name:"Frankfurter",
+    symbols:"https://api.frankfurter.dev/v2/currencies",
+    latest:function(base){return "https://api.frankfurter.dev/v2/rates?base="+encodeURIComponent(base)},
+    rate:function(from,to){return "https://api.frankfurter.dev/v2/rate/"+encodeURIComponent(from)+"/"+encodeURIComponent(to)}
   }
 };
 /* Embedded “last-resort” rates (keeps UX alive offline) */
@@ -56,7 +56,7 @@ var I18N = {
     amount:"Amount", from:"From", to:"To",
     convert:"Convert", swap:"Swap", quick:"Quick:",
     options:"Options", provider:"Provider",
-    provider_host:"exchangerate.host", provider_frank:"Frankfurter (ECB)", provider_auto:"Auto (Best)",
+    provider_host:"Frankfurter", provider_frank:"Frankfurter", provider_auto:"Auto (Best)",
     cache:"Cache rates in this browser", invert:"Show inverse rate",
     help:"Client-side only. ISO-accurate rounding. No tracking.",
     copying:"Copied!", copyfail:"Copy failed", linkcopied:"Link copied!",
@@ -68,7 +68,7 @@ var I18N = {
     amount:"Amaun", from:"Dari", to:"Ke",
     convert:"Tukar", swap:"Tukar Arah", quick:"Pantas:",
     options:"Tetapan", provider:"Penyedia",
-    provider_host:"exchangerate.host", provider_frank:"Frankfurter (ECB)", provider_auto:"Auto (Terbaik)",
+    provider_host:"Frankfurter", provider_frank:"Frankfurter", provider_auto:"Auto (Terbaik)",
     cache:"Cache kadar dalam pelayar ini", invert:"Tunjuk kadar songsang",
     help:"100% sisi-klien. Pembundaran ISO yang tepat. Tiada penjejakan.",
     copying:"Disalin!", copyfail:"Salin gagal", linkcopied:"Pautan disalin!",
@@ -157,16 +157,25 @@ async function initWidget(root){
       try{
         if(k==='host'){
           var h = await fetchJSON(providers.host.symbols);
-          var list = Object.keys(h.symbols||{}).map(function(code){return {code:code,name:h.symbols[code].description}});
+          var list = parseSymbols(h);
           if(list.length) return list;
         }else{
           var f = await fetchJSON(providers.frank.symbols);
-          var list2 = Object.keys(f||{}).map(function(code){return {code:code,name:f[code]}});
+          var list2 = parseSymbols(f);
           if(list2.length) return list2;
         }
       }catch(e){}
     }
     return [{code:'USD',name:'US Dollar'},{code:'MYR',name:'Malaysian Ringgit'},{code:'SGD',name:'Singapore Dollar'},{code:'EUR',name:'Euro'},{code:'JPY',name:'Japanese Yen'},{code:'IDR',name:'Indonesian Rupiah'},{code:'GBP',name:'British Pound'}];
+  }
+  function parseSymbols(data){
+    if(Array.isArray(data.value)){
+      return data.value.map(function(c){return {code:c.iso_code,name:c.name}});
+    }
+    if(data.symbols){
+      return Object.keys(data.symbols).map(function(code){return {code:code,name:data.symbols[code].description}});
+    }
+    return Object.keys(data||{}).map(function(code){return {code:code,name:data[code]}});
   }
   function fillSelect(el, list, prefer){
     if(!el) return;
@@ -181,7 +190,8 @@ async function initWidget(root){
   }
   async function getRate(fromC,toC,providerPref){
     var now=Date.now(), key=(providerPref||'auto')+':'+fromC+'->'+toC, cache=readCache();
-    if($('.tbbx-cache',root)?.checked && cache[key] && (now-cache[key].ts)<CACHE_TTL_MS){
+    var cacheBox = $('.tbbx-cache',root);
+    if(cacheBox && cacheBox.checked && cache[key] && (now-cache[key].ts)<CACHE_TTL_MS){
       return { rate:cache[key].rate, date:cache[key].date, provider:cache[key].provider, cached:true };
     }
     var order = (providerPref==='frank')?['frank']: (providerPref==='host'?['host']:['host','frank']);
@@ -190,16 +200,16 @@ async function initWidget(root){
       try{
         if(p==='host'){
           var data=await fetchJSON(providers.host.rate(fromC,toC));
-          var rate=Number(data.result); if(!isFinite(rate)||rate<=0) throw 0;
-          var date=(data.date||'').slice(0,10);
-          if($('.tbbx-cache',root)?.checked){ cache[key]={rate:rate,date:date,provider:p,ts:now}; writeCache(cache); }
-          return { rate:rate, date:date, provider:p, cached:false };
+          var rate=Number(data.rate || (data.value && data.value[0] && data.value[0].rate) || data.result); if(!isFinite(rate)||rate<=0) throw 0;
+          var date=(data.date || (data.value && data.value[0] && data.value[0].date) || '').slice(0,10);
+          if(cacheBox && cacheBox.checked){ cache[key]={rate:rate,date:date,provider:'frank',ts:now}; writeCache(cache); }
+          return { rate:rate, date:date, provider:'frank', cached:false };
         }else{
           var data2=await fetchJSON(providers.frank.rate(fromC,toC));
-          var rate2=Number(data2.rates?.[toC]); if(!isFinite(rate2)||rate2<=0) throw 0;
-          var date2=(data2.date||'').slice(0,10);
-          if($('.tbbx-cache',root)?.checked){ cache[key]={rate:rate2,date:date2,provider:p,ts:now}; writeCache(cache); }
-          return { rate:rate2, date:date2, provider:p, cached:false };
+          var rate2=Number(data2.rate || (data2.value && data2.value[0] && data2.value[0].rate) || (data2.rates && data2.rates[toC])); if(!isFinite(rate2)||rate2<=0) throw 0;
+          var date2=(data2.date || (data2.value && data2.value[0] && data2.value[0].date) || '').slice(0,10);
+          if(cacheBox && cacheBox.checked){ cache[key]={rate:rate2,date:date2,provider:'frank',ts:now}; writeCache(cache); }
+          return { rate:rate2, date:date2, provider:'frank', cached:false };
         }
       }catch(e){}
     }
@@ -218,9 +228,11 @@ async function initWidget(root){
     if(!fromC||!toC||!isFinite(val)) return;
     out.textContent = L.converting;
     try{
-      var pref = $('.tbbx-provider',root)?.value || localStorage.getItem('tbbx_provider') || 'auto';
+      var providerBox = $('.tbbx-provider',root);
+      var pref = (providerBox && providerBox.value) || localStorage.getItem('tbbx_provider') || 'auto';
       var g = await getRate(fromC,toC,pref);
-      var inv = $('.tbbx-invert',root)?.checked ? (1/g.rate) : g.rate;
+      var invertBox = $('.tbbx-invert',root);
+      var inv = (invertBox && invertBox.checked) ? (1/g.rate) : g.rate;
       var result = val * inv;
       out.textContent = fmt(val,fromC)+' '+fromC+' = '+fmt(result,toC)+' '+toC;
       if(rateinfo) rateinfo.textContent = 'Rate: 1 '+fromC+' = '+precise(inv,toC)+' '+toC+' ('+g.provider+(g.cached?' • cached':'')+' • '+(g.date||'today')+')';
